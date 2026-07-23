@@ -18,6 +18,17 @@ jobs:
           unzip -o Upscaler4x.zip -d .
           ls -la Upscaler4x
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Convert PyTorch model (.pth) to ONNX
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install onnx
+          python Upscaler4x/tools/convert_pth_to_onnx.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
