@@ -1,72 +1,43 @@
-cd /home/claude && cat > load_pth.py << 'EOF'
-import zipfile, pickle, io, struct
-import numpy as np
+name: Build APK
 
-path = '/mnt/user-data/uploads/realesr-animevideov3__1_.pth'
-z = zipfile.ZipFile(path)
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-storages = {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-class FakeStorage:
-    def __init__(self, dtype, key, size, location):
-        self.dtype = dtype
-        self.key = key
-        self.size = size
-        self.location = location
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-def persistent_load(saved_id):
-    typename = saved_id[0]
-    assert typename == 'storage'
-    storage_type, key, location, numel = saved_id[1], saved_id[2], saved_id[3], saved_id[4]
-    dtype_map = {
-        'FloatStorage': np.float32,
-        'DoubleStorage': np.float64,
-        'HalfStorage': np.float16,
-        'LongStorage': np.int64,
-        'IntStorage': np.int32,
-    }
-    dtype = dtype_map.get(storage_type.__name__ if hasattr(storage_type,'__name__') else str(storage_type), np.float32)
-    return FakeStorage(dtype, key, numel, location)
+      - name: Unzip project
+        run: |
+          unzip -o Upscaler4x.zip -d .
+          ls -la Upscaler4x
 
-class RebuildTensor:
-    pass
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-def rebuild_tensor_v2(storage, storage_offset, size, stride, requires_grad, backward_hooks, metadata=None):
-    raw = z.read(f'archive/data/{storage.key}')
-    arr = np.frombuffer(raw, dtype=storage.dtype)
-    arr = arr[storage_offset:storage_offset+int(np.prod(size))] if size else arr
-    if size:
-        arr = arr.reshape(size)
-    return arr
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-class FakeUnpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        if module == 'torch._utils' and name == '_rebuild_tensor_v2':
-            return rebuild_tensor_v2
-        if module == 'torch' and name.endswith('Storage'):
-            return type(name, (), {'__name__': name})
-        if module == 'collections' and name == 'OrderedDict':
-            return dict
-        if module == 'torch._utils' and name == '_rebuild_parameter':
-            def rebuild_param(data, requires_grad, backward_hooks):
-                return data
-            return rebuild_param
-        # fallback: return a dummy class
-        return type(name, (), {})
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.6
 
-    def persistent_load(self, pid):
-        return persistent_load(pid)
+      - name: Build debug APK
+        working-directory: Upscaler4x
+        run: gradle assembleDebug --stacktrace
 
-data = z.read('archive/data.pkl')
-up = FakeUnpickler(io.BytesIO(data))
-obj = up.load()
-print(type(obj))
-if isinstance(obj, dict):
-    keys = list(obj.keys())
-    print('num keys:', len(keys))
-    for k in keys:
-        v = obj[k]
-        shape = getattr(v, 'shape', None)
-        print(k, shape)
-EOF
-python3 load_pth.py 2>&1 | head -100
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: upscaler-apk
+          path: Upscaler4x/app/build/outputs/apk/debug/app-debug.apk
